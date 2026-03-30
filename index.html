@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seattle Zoning — SR99 &amp; N 130th St</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+
+    #map { width: 100vw; height: 100vh; }
+
+    #legend {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: rgba(255,255,255,0.96);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.22);
+      z-index: 1000;
+      max-height: calc(100vh - 24px);
+      overflow-y: auto;
+      min-width: 230px;
+      max-width: 270px;
+    }
+    #legend h3 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 7px;
+      margin-bottom: 9px;
+      line-height: 1.3;
+    }
+    #legend h3 small {
+      display: block;
+      font-weight: 400;
+      font-size: 11px;
+      color: #777;
+      margin-top: 2px;
+    }
+    .legend-section {
+      font-size: 10px;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 8px 0 4px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 4px;
+    }
+    .swatch {
+      width: 16px;
+      height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+      border: 1px solid rgba(0,0,0,0.18);
+    }
+    .legend-label { font-size: 12px; color: #222; }
+    .legend-count { font-size: 10px; color: #aaa; margin-left: auto; padding-left: 4px; }
+
+    #status {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.76);
+      color: #fff;
+      padding: 7px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      z-index: 2000;
+      transition: opacity 0.5s;
+      white-space: nowrap;
+    }
+    #status.hidden { opacity: 0; pointer-events: none; }
+
+    .popup-zone { font-size: 15px; font-weight: 700; color: #111; }
+    .popup-desc { font-size: 12px; color: #444; margin-top: 2px; line-height: 1.5; }
+    .popup-row { margin-top: 4px; font-size: 12px; }
+    .popup-row b { color: #555; font-weight: 600; }
+    .popup-link { font-size: 11px; margin-top: 6px; }
+    .popup-link a { color: #0060c0; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="legend">
+  <h3>
+    Seattle Zoning
+    <small>Centered: SR 99 &amp; N 130th St</small>
+  </h3>
+  <div id="legend-body" style="color:#888;font-size:12px">Loading…</div>
+</div>
+
+<div id="status">Loading zoning data…</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+'use strict';
+
+// ── Center coordinate ────────────────────────────────────────────────────────
+const LAT = 47.723251, LNG = -122.344970;
+
+// ── Exact color mapping for DETAIL_DESC values ───────────────────────────────
+// Colors verified against actual dataset (26 categories).
+// fill: polygon fill color, stroke: border color
+const COLORS = {
+  // Residential ─ warm greens / yellows
+  'Neighborhood Residential':  { fill: '#78c843', stroke: '#4a8c20' },
+  'Lowrise 1':                 { fill: '#cce840', stroke: '#8aaa00' },
+  'Lowrise 2':                 { fill: '#f0dc30', stroke: '#b09000' },
+  'Lowrise 3':                 { fill: '#f8c020', stroke: '#c07800' },
+  'Midrise':                   { fill: '#f89030', stroke: '#c05000' },
+  'Highrise':                  { fill: '#f05020', stroke: '#b02000' },
+  // Neighborhood Commercial ─ light blues
+  'Neighborhood Commercial 1': { fill: '#80d0f8', stroke: '#2890d0' },
+  'Neighborhood Commercial 2': { fill: '#40b8f0', stroke: '#0878c0' },
+  'Neighborhood Commercial 3': { fill: '#1898d8', stroke: '#0060a8' },
+  // Commercial ─ mid blues
+  'Commercial 1':              { fill: '#2080c8', stroke: '#004898' },
+  'Commercial 2':              { fill: '#0858a8', stroke: '#003070' },
+  // Seattle Mixed ─ purple
+  'Seattle Mixed':             { fill: '#c070e8', stroke: '#8030c0' },
+  // Downtown ─ reds / crimsons
+  'Downtown Retail Core':      { fill: '#e83030', stroke: '#a00000' },
+  'Downtown Office Core':      { fill: '#c01820', stroke: '#800000' },
+  'Downtown Mixed':            { fill: '#e85828', stroke: '#a02800' },
+  'Downtown Harborfront':      { fill: '#e07850', stroke: '#a04020' },
+  // Historic / special downtown districts ─ warm ambers
+  'Pioneer Square':            { fill: '#d89820', stroke: '#906000' },
+  'Pike Market':               { fill: '#e8b030', stroke: '#a07000' },
+  'International District':    { fill: '#e8a040', stroke: '#a06000' },
+  // Industrial ─ cool purples / greys
+  'Industrial Buffer':         { fill: '#b898d0', stroke: '#705898' },
+  'Industrial Commercial':     { fill: '#9878c0', stroke: '#503890' },
+  'Industry and Innovation':   { fill: '#7858a8', stroke: '#381878' },
+  'Urban Industrial':          { fill: '#583888', stroke: '#280858' },
+  'Maritime Manufacturing and Logistics': { fill: '#607898', stroke: '#304060' },
+  // Special / Institutional
+  'Major Institution Overlay': { fill: '#38c8c0', stroke: '#089888' },
+  'Master Planned Community':  { fill: '#50b870', stroke: '#208048' },
+};
+
+function getColor(group) {
+  return COLORS[group] || { fill: '#bbbbbb', stroke: '#888888' };
+}
+
+// Legend sections (display order)
+const SECTIONS = [
+  { label: 'Residential',   keys: ['Neighborhood Residential','Lowrise 1','Lowrise 2','Lowrise 3','Midrise','Highrise'] },
+  { label: 'Commercial',    keys: ['Neighborhood Commercial 1','Neighborhood Commercial 2','Neighborhood Commercial 3','Commercial 1','Commercial 2'] },
+  { label: 'Mixed Use',     keys: ['Seattle Mixed'] },
+  { label: 'Downtown',      keys: ['Downtown Retail Core','Downtown Office Core','Downtown Mixed','Downtown Harborfront','Pioneer Square','Pike Market','International District'] },
+  { label: 'Industrial',    keys: ['Industrial Buffer','Industrial Commercial','Industry and Innovation','Urban Industrial','Maritime Manufacturing and Logistics'] },
+  { label: 'Institutional', keys: ['Major Institution Overlay','Master Planned Community'] },
+];
+
+// ── Map setup ────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([LAT, LNG], 15);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+// Center marker
+L.circleMarker([LAT, LNG], {
+  radius: 8, color: '#dd0000', weight: 3,
+  fillColor: '#ff2020', fillOpacity: 1,
+  zIndexOffset: 1000,
+}).addTo(map).bindTooltip('SR 99 &amp; N 130th St', { permanent: false, direction: 'top' });
+
+// ── Status helper ────────────────────────────────────────────────────────────
+const statusEl = document.getElementById('status');
+function setStatus(msg, autoHide = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.remove('hidden');
+  if (autoHide) setTimeout(() => statusEl.classList.add('hidden'), 4000);
+}
+
+// ── GeoJSON rendering ─────────────────────────────────────────────────────────
+function renderGeoJSON(geojson) {
+  const counts = {};
+
+  function makeStyle(group) {
+    const c = getColor(group);
+    return { fillColor: c.fill, fillOpacity: 0.52, color: c.stroke, weight: 0.8 };
+  }
+
+  L.geoJSON(geojson, {
+    style(feat) {
+      return makeStyle(feat.properties.DETAIL_DESC || '');
+    },
+    onEachFeature(feat, layer) {
+      const p = feat.properties;
+      const group   = p.DETAIL_DESC || '';
+      const zone    = p.ZONING      || p.BASE_ZONE || '';
+      const pubDesc = p.PUBLIC_DESCRIPTION || '';
+      const mha     = p.MHA === 'Y' ? `Yes${p.MHA_VALUE ? ' – Tier ' + p.MHA_VALUE : ''}` : '';
+      const ped     = (p.PEDESTRIAN || '').trim();
+      const hist    = (p.HISTORIC   || '').trim();
+      const shore   = (p.SHORELINE  || '').trim();
+      const ord     = p.ORDINANCE   || '';
+      const eff     = p.EFFECTIVE   ? new Date(p.EFFECTIVE).toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'}) : '';
+      const chLink  = p.CHAPTER_LINK || '';
+      const chapter = p.CHAPTER || '';
+
+      const extras = [
+        ped   && `<div class="popup-row"><b>Ped Overlay:</b> ${ped}</div>`,
+        hist  && `<div class="popup-row"><b>Historic:</b> ${hist}</div>`,
+        shore && `<div class="popup-row"><b>Shoreline:</b> ${shore}</div>`,
+        mha   && `<div class="popup-row"><b>MHA:</b> ${mha}</div>`,
+        ord   && `<div class="popup-row"><b>Ordinance:</b> ${ord}${eff ? ' &mdash; ' + eff : ''}</div>`,
+      ].filter(Boolean).join('');
+
+      layer.bindPopup(
+        `<div style="max-width:240px">
+          <div class="popup-zone">${zone}</div>
+          <div class="popup-desc">${group}${pubDesc ? '<br><i style="color:#555">' + zone + ' ' + pubDesc + '</i>' : ''}</div>
+          ${extras}
+          ${chLink ? `<div class="popup-link"><a href="${chLink}" target="_blank">${chapter} ↗</a></div>` : ''}
+        </div>`,
+        { maxWidth: 280 }
+      );
+
+      const baseStyle = makeStyle(group);
+      layer.on('mouseover', function() {
+        this.setStyle({ fillOpacity: 0.78, weight: 2, color: '#111' });
+        this.bringToFront();
+      });
+      layer.on('mouseout', function() { this.setStyle(baseStyle); });
+
+      counts[group] = (counts[group] || 0) + 1;
+    },
+  }).addTo(map);
+
+  // Build legend
+  const body = document.getElementById('legend-body');
+  let html = '';
+  for (const { label, keys } of SECTIONS) {
+    const present = keys.filter(k => counts[k]);
+    if (!present.length) continue;
+    html += `<div class="legend-section">${label}</div>`;
+    for (const k of present) {
+      const c = getColor(k);
+      html += `<div class="legend-item">
+        <div class="swatch" style="background:${c.fill};border-color:${c.stroke}"></div>
+        <span class="legend-label">${k}</span>
+        <span class="legend-count">${counts[k]}</span>
+      </div>`;
+    }
+  }
+  // Any unlisted groups
+  const listed = SECTIONS.flatMap(s => s.keys);
+  const unlisted = Object.keys(counts).filter(k => !listed.includes(k));
+  if (unlisted.length) {
+    html += `<div class="legend-section">Other</div>`;
+    for (const k of unlisted) {
+      const c = getColor(k);
+      html += `<div class="legend-item">
+        <div class="swatch" style="background:${c.fill};border-color:${c.stroke}"></div>
+        <span class="legend-label">${k || 'Unknown'}</span>
+        <span class="legend-count">${counts[k]}</span>
+      </div>`;
+    }
+  }
+  body.innerHTML = html || '<i>No zones found</i>';
+
+  setStatus(`Loaded ${geojson.features.length.toLocaleString()} zoning polygons`, true);
+}
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+async function loadFeatureServer(baseUrl) {
+  const all = [];
+  let offset = 0;
+  while (true) {
+    setStatus(`Fetching from ArcGIS… (records ${offset + 1}–${offset + 1000})`);
+    const url = `${baseUrl}/query?where=1=1&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=1000&resultOffset=${offset}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (!d.features?.length) break;
+    all.push(...d.features);
+    if (!d.exceededTransferLimit) break;
+    offset += 1000;
+  }
+  return { type: 'FeatureCollection', features: all };
+}
+
+async function main() {
+  // 1. Local GeoJSON file (works via http-server)
+  const localNames = [
+    'Current_Land_Use_Zoning_Detail_2_5794446273568251511.geojson',
+    'zoning.geojson',
+  ];
+  for (const name of localNames) {
+    try {
+      const r = await fetch(name);
+      if (r.ok) {
+        setStatus(`Parsing ${name}…`);
+        const g = await r.json();
+        if (g.features?.length) { renderGeoJSON(g); return; }
+      }
+    } catch (_) {}
+  }
+
+  // 2. ArcGIS FeatureServer (permanent, paginated)
+  try {
+    const g = await loadFeatureServer(
+      'https://services.arcgis.com/ZOyb2t4B0UYuYNYH/arcgis/rest/services/Current_Land_Use_Zoning_Detail_2/FeatureServer/0'
+    );
+    if (g.features.length) { renderGeoJSON(g); return; }
+  } catch (e) { console.warn('FeatureServer failed:', e.message); }
+
+  // 3. Error state
+  setStatus('⚠ Could not load data — see legend panel');
+  document.getElementById('legend-body').innerHTML = `
+    <div style="font-size:12px;color:#c00;line-height:1.7">
+      <b>Data not found.</b><br><br>
+      Serve this folder with:<br>
+      <code>python3 -m http.server 8080</code><br>
+      then open <code>http://localhost:8080</code><br><br>
+      Make sure <code>Current_Land_Use_Zoning_Detail_2<br>_5794446273568251511.geojson</code><br>
+      is in the same folder as <code>index.html</code>.
+    </div>`;
+}
+
+main();
+</script>
+</body>
+</html>
